@@ -2,16 +2,13 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from .registro import guardar_registro 
+from .registro import guardar_registro
+from .Personas import PERSONAS_DEMO, REGLAS_PERFIL_CLIENTE, REGLAS_ESTADO_LLAMADA
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai import types
 
-# Si Gemini no responde (API deshabilitada, rate limit, sin internet, etc.)
-# activa esto con la variable de entorno MODO_SIMULADO=1 para probar TODO
-# el resto del pipeline (frontend, cierre de chat, feedback, guardado en
-# SQLite, dashboard) sin depender de la API real. Recuerda apagarlo
-# (MODO_SIMULADO=0 o quitar la variable) antes de la demo real.
+
 MODO_SIMULADO = os.environ.get("MODO_SIMULADO", "0") == "0"
 
 # Orden de importancia de features, tal como salio del .feature_importances_
@@ -39,6 +36,7 @@ HORARIO_CHATBOT = {
     4: (8, 20),  # viernes
 }
 
+
 # Calculo de hora habil para el chatbot.
 def _es_horario_habil(ahora: datetime | None = None) -> bool:
     ahora = ahora or datetime.now(TIMEZONE_EL_SALVADOR)
@@ -48,6 +46,7 @@ def _es_horario_habil(ahora: datetime | None = None) -> bool:
     apertura, cierre = rango
     return apertura <= ahora.hour < cierre
 
+
 #  Definir frase para el prompt del LLM que describe si estamos dentro o fuera del horario habil
 def describir_horario_habil(ahora: datetime | None = None) -> str:
 
@@ -55,10 +54,11 @@ def describir_horario_habil(ahora: datetime | None = None) -> str:
 
     if _es_horario_habil(ahora):
         return "Estamos dentro del horario habil para el chatbot."
-    return("En este moment el banco esta FUERA de horario de atencion "
+    return ("En este moment el banco esta FUERA de horario de atencion "
         f"({ahora.strftime('%A %H:%M')}, hora El Salvador). Si el caso necesita "
         "escalar a un humano, debe quedar registrado para atenderse el "
         "siguiente dia habil -- no ofrezcas una llamada o respuesta inmediata.")
+
 
 def _causa_principal(features: dict) -> str:
     """Recorre las features en orden de importancia real del modelo y
@@ -108,8 +108,9 @@ def clasificar_arquetipo(datos_usuario: dict, features: dict) -> str:
     total_atrasos = features.get("TotalPastDue", 0)
     revolving = features.get("RevolvingUtilizationOfUnsecuredLines", 0)
 
-    # Reincidente: atrasos graves o repetidos -- pesa mas que cualquier
-    # otra senal, sin importar edad ni utilizacion.
+    # Reincidente (patron de RIESGO del modelo -- NO confundir con el
+    # "perfil_conversacional" de Personas.py, son cosas distintas):
+    # atrasos graves o repetidos, pesa mas que cualquier otra senal.
     if atrasos_90 >= 1 or total_atrasos >= 3:
         return "reincidente"
 
@@ -132,6 +133,7 @@ def clasificar_arquetipo(datos_usuario: dict, features: dict) -> str:
         return "atraso_aislado"
 
     return "sin_patron_claro"
+
 
 def construir_contexto_riesgo(resultado_modelo: dict, datos_usuario: dict, features: dict) -> str:
     causa = _causa_principal(features)
@@ -240,7 +242,7 @@ necesita escuchar.
 
 9. Tono: cercano, en español neutro/salvadoreño, frases cortas. Nunca uses
    jerga tecnica ni menciones que eres un modelo o una IA a menos que te
-   pregunten directamente. 
+   pregunten directamente.
 
 """
 
@@ -306,9 +308,31 @@ REGISTRAR_RESULTADO = {
         "required": ["estado_final", "resumen"],
     },
 }
+
+ACTUALIZAR_ESTADO_LLAMADA = {
+    "name": "actualizar_estado_llamada",
+    "description": "Actualiza el estado emocional/situacional observado del cliente EN ESTE turno, sin cerrar la conversación.",
+    "parameters": {
+        "type": "OBJECT",
+        "properties": {
+            "estado": {
+                "type": "STRING",
+                "enum": ["cooperativo", "evasivo", "poco_tiempo", "dificultad_economica", "molesto"],
+            },
+        },
+        "required": ["estado"],
+    },
+}
+
 TOOLS = types.Tool(
-    function_declarations=[PROPONER_REESTRUCTURACION, ESCALAR_A_HUMANO, REGISTRAR_RESULTADO]
+    function_declarations=[
+        PROPONER_REESTRUCTURACION,
+        ESCALAR_A_HUMANO,
+        REGISTRAR_RESULTADO,
+        ACTUALIZAR_ESTADO_LLAMADA,
+    ]
 )
+
 
 @dataclass
 class Sesion:
@@ -319,9 +343,20 @@ class Sesion:
     resultado_registrado: dict | None = None
     propuesta_reestructuracion: dict | None = None
     contador_simulado: int = 0
+    persona_id: str | None = None
+    estado_llamada: str | None = None
 
     def system_prompt(self) -> str:
-        return f"{SYSTEM_PROMPT_BASE}\n\n{self.contexto_riesgo}"
+        extra = ""
+        persona = PERSONAS_DEMO.get(self.persona_id) if self.persona_id else None
+        if persona:
+            reglas = (
+                REGLAS_PERFIL_CLIENTE.get(persona["perfil_conversacional"], [])
+                + REGLAS_ESTADO_LLAMADA.get(self.estado_llamada, [])
+            )
+            if reglas:
+                extra = "\n\nREGLAS SEGMENTADAS PARA ESTE CLIENTE:\n" + "\n".join(f"- {r}" for r in reglas)
+        return f"{SYSTEM_PROMPT_BASE}\n\n{self.contexto_riesgo}{extra}"
 
     def transcripcion_texto(self) -> str:
         lineas = []
@@ -331,6 +366,8 @@ class Sesion:
             if texto:
                 lineas.append(f"{rol}: {texto}")
         return "\n".join(lineas)
+
+
 _client = None
 
 
@@ -344,9 +381,9 @@ def _get_client() -> genai.Client:
 # gemini-3.8-flash es el modelo Flash vigente en el free tier de AI Studio
 # modelo. Revisa https://aistudio.google.com/ para el nombre exacto vigente.
 MODELOS_LLM = [
-    "gemini-3.6-flash",      
-    "gemini-3.7-flash",        
-    "gemini-3.1-flash-lite",  
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.1-flash-lite",
 ]
 
 
@@ -411,9 +448,6 @@ def _turno_simulado(sesion: Sesion, mensaje_usuario: str | None) -> dict:
         sesion.propuesta_reestructuracion = tool_input
 
     elif paso >= 3:
-        # Si el "cliente" escribio numeros del 1 al 5 en su ultima
-        # respuesta, los usamos como calificaciones -- asi tambien se
-        # prueba ese guardado sin necesidad del LLM real.
         numeros = [
             int(n) for n in (mensaje_usuario or "").split()
             if n.isdigit() and 1 <= int(n) <= 5
@@ -493,7 +527,18 @@ def turno(sesion: Sesion, mensaje_usuario: str | None) -> dict:
     sesion.historial.append(contenido_modelo)
 
     texto = "".join(p.text for p in contenido_modelo.parts if p.text)
-    llamada_tool = next((p.function_call for p in contenido_modelo.parts if p.function_call), None)
+
+    # Puede haber mas de un function_call en el mismo turno (ej. el modelo
+    # actualiza el estado Y propone una reestructuracion a la vez). Sacamos
+    # el estado aparte porque NO cierra ni es el "tool_usada" principal que
+    # espera el frontend/dashboard.
+    llamadas = [p.function_call for p in contenido_modelo.parts if p.function_call]
+
+    for llamada in llamadas:
+        if llamada.name == "actualizar_estado_llamada":
+            sesion.estado_llamada = dict(llamada.args)["estado"]
+
+    llamada_tool = next((l for l in llamadas if l.name != "actualizar_estado_llamada"), None)
 
     if llamada_tool and llamada_tool.name == "proponer_reestructuracion":
         sesion.propuesta_reestructuracion = dict(llamada_tool.args)
