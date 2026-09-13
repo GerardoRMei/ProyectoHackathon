@@ -4,7 +4,7 @@ import io
 import asyncio
 import time
 
-CHATBOT_VOICE = "es-MX-DaliaNeural"
+CHATBOT_VOICE = "es-MX-JorgeNeural"
 
 # edge_tts es un servicio no oficial (sin SLA) -- puede colgarse sin avisar.
 # Este timeout evita que un cuelgue de la voz trabe toda la respuesta del
