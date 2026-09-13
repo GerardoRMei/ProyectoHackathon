@@ -72,7 +72,7 @@ const FEATURES_POR_PERSONA: Record<string, typeof USUARIO_DE_PRUEBA> = {
     "NumberOfTime60-89DaysPastDueNotWorse": 0,
     NumberOfDependents: 2,
   },
-  valeria: {
+  ricardo: {
     // reincidente EXAGERADO: multiples atrasos severos + utilizacion al limite,
     // pensado para disparar la alerta del XGBoost con margen amplio
     RevolvingUtilizationOfUnsecuredLines: 1.1,
