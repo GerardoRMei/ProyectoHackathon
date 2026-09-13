@@ -32,6 +32,7 @@ import pandas as pd
 from services.Copiloto import Sesion, turno, construir_contexto_riesgo, describir_horario_habil
 from services.registro import inicializar_db, obtener_registros, obtener_metricas
 from services.voiceGeneration import generar_audio_base64
+from services.Personas import PERSONAS_DEMO
 
 inicializar_db()
 
@@ -51,8 +52,6 @@ app.add_middleware(
 modelo = joblib.load("C:\\Users\\gerad\\Documents\\ProyectoHackathon\\backend\\services\\xgb_model.joblib")
 
 # Umbral de riesgo a partir del cual activamos el mensaje del Copiloto.
-# Es un hiperparámetro de PRODUCTO, no del modelo -- lo pueden ajustar en
-# vivo el día del hackathon según qué tan "sensible" quieran que sea la app.
 UMBRAL_RIESGO = 0.5
 
 # Sesiones de chat activas. Un dict en memoria alcanza para la demo del
@@ -61,12 +60,11 @@ UMBRAL_RIESGO = 0.5
 _sesiones: Dict[str, Sesion] = {}
 
 
-# ---------------------------------------------------------------------------
-# Definimos la forma exacta de los datos que la API espera recibir.
-# Pydantic valida esto automáticamente (si falta un campo o tiene el tipo
-# equivocado, la API responde con error 422 antes de tocar el modelo).
-# ---------------------------------------------------------------------------
 class DatosUsuario(BaseModel):
+    persona_id: str | None = Field(
+        default=None,
+        description="Id de la persona demo elegida en el selector (sofia, sebastian, ricardo, jorge, rodrigo). No se usa para el modelo.",
+    )
     RevolvingUtilizationOfUnsecuredLines: float = Field(..., example=0.3)
     age: int = Field(..., example=35)
     numero_atrasos_30_59: int = Field(..., example=0, alias="NumberOfTime30-59DaysPastDueNotWorse")
@@ -117,10 +115,6 @@ def _correr_modelo(datos: DatosUsuario):
     copiloto)."""
     X = construir_features(datos)
 
-    # El modelo se entrenó con una columna extra "Unnamed: 0" (índice del
-    # CSV que se coló como feature). No la usamos para nada real, pero hay
-    # que dársela para que XGBoost no truene. Alineamos TODO al orden y
-    # nombres exactos que el modelo espera, por si acaso hay más diferencias.
     columnas_esperadas = modelo.get_booster().feature_names
     for col in columnas_esperadas:
         if col not in X.columns:
@@ -135,10 +129,10 @@ def _correr_modelo(datos: DatosUsuario):
     features = X.iloc[0].to_dict()
     return resultado_modelo, features
 
+
 @app.post("/predecir")
 def predecir(datos: DatosUsuario):
-    """Endpoint 'crudo': solo el score del modelo, sin tocar al LLM.
-    Util para pruebas rapidas del modelo aislado del chatbot."""
+    """Endpoint 'crudo': solo el score del modelo, sin tocar al LLM."""
     resultado_modelo, _ = _correr_modelo(datos)
     return resultado_modelo
 
@@ -159,25 +153,27 @@ async def iniciar_chat(datos: DatosUsuario):
     contexto = construir_contexto_riesgo(resultado_modelo, datos_usuario, features)
     contexto = f"{contexto}\n\n{describir_horario_habil()}"
 
+    persona = PERSONAS_DEMO.get(datos.persona_id) if datos.persona_id else None
+
     sesion_id = str(uuid.uuid4())
     sesion = Sesion(
         contexto_riesgo=contexto,
         sesion_id=sesion_id,
         score_riesgo=resultado_modelo["score_riesgo"],
+        persona_id=datos.persona_id,
+        estado_llamada=persona["estado_inicial"] if persona else None,
     )
     _sesiones[sesion_id] = sesion
 
     resultado_turno = turno(sesion, None)
     audio_b64 = await generar_audio_base64(resultado_turno["texto"])
-    return {"sesion_id": sesion_id, **resultado_modelo, **resultado_turno, "audio_base64":audio_b64}
+    return {"sesion_id": sesion_id, **resultado_modelo, **resultado_turno, "audio_base64": audio_b64}
 
 
-    
-
-"""El cliente respondio algo en el chat -- le pasamos el mensaje al
-    copiloto y devolvemos su siguiente turno."""
 @app.post("/chat/mensaje")
 async def enviar_mensaje(payload: MensajeChat):
+    """El cliente respondio algo en el chat -- le pasamos el mensaje al
+    copiloto y devolvemos su siguiente turno."""
     sesion = _sesiones.get(payload.sesion_id)
     if sesion is None:
         raise HTTPException(status_code=404, detail="Sesion no encontrada")
@@ -211,7 +207,7 @@ def health_check():
 def listar_registros():
     return obtener_registros()
 
+
 @app.get("/dashboard/metricas")
 def metricas():
     return obtener_metricas()
-

@@ -25,7 +25,8 @@ def inicializar_db():
                 score_riesgo REAL,
                 transcripcion TEXT NOT NULL,
                 calificacion_satisfaccion INTEGER,
-                calificacion_trato INTEGER
+                calificacion_trato INTEGER,
+                nombre_cliente TEXT
             )
         """)
         _migrar_columnas_nuevas(con)
@@ -40,6 +41,7 @@ def _migrar_columnas_nuevas(con):
     columnas_esperadas = {
         "calificacion_satisfaccion": "INTEGER",
         "calificacion_trato": "INTEGER",
+        "nombre_cliente": "TEXT",
     }
     columnas_actuales = {
         fila[1] for fila in con.execute("PRAGMA table_info(registros)").fetchall()
@@ -59,14 +61,15 @@ def guardar_registro(
     score_riesgo: float | None = None,
     calificacion_satisfaccion: int | None = None,
     calificacion_trato: int | None = None,
+    nombre_cliente: str | None = None,
 ):
     with _conexion() as con:
         con.execute(
             """INSERT INTO registros
                (sesion_id, fecha_hora, estado_final, resumen, fecha_acordada,
                 tipo_propuesta, score_riesgo, transcripcion,
-                calificacion_satisfaccion, calificacion_trato)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                calificacion_satisfaccion, calificacion_trato, nombre_cliente)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 sesion_id,
                 datetime.now(TIMEZONE_EL_SALVADOR).isoformat(),
@@ -78,6 +81,7 @@ def guardar_registro(
                 transcripcion,
                 calificacion_satisfaccion,
                 calificacion_trato,
+                nombre_cliente,
             ),
         )
 

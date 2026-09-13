@@ -15,6 +15,7 @@ export interface Registro {
   calificacion_satisfaccion?: number | null;
   calificacion_trato?: number | null;
   transcripcion?: string | null;
+  nombre_cliente?: string | null;
 }
 
 export interface Metricas {
