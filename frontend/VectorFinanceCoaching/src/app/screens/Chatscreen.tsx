@@ -72,18 +72,19 @@ const FEATURES_POR_PERSONA: Record<string, typeof USUARIO_DE_PRUEBA> = {
     "NumberOfTime60-89DaysPastDueNotWorse": 0,
     NumberOfDependents: 2,
   },
-  ricardo: {
-    // sin_patron_claro: riesgo bajo, cliente ordenado
-    RevolvingUtilizationOfUnsecuredLines: 0.2,
-    age: 50,
-    "NumberOfTime30-59DaysPastDueNotWorse": 0,
-    DebtRatio: 0.2,
-    MonthlyIncome: 1800,
-    NumberOfOpenCreditLinesAndLoans: 6,
-    NumberOfTimes90DaysLate: 0,
-    NumberRealEstateLoansOrLines: 1,
-    "NumberOfTime60-89DaysPastDueNotWorse": 0,
-    NumberOfDependents: 0,
+  valeria: {
+    // reincidente EXAGERADO: multiples atrasos severos + utilizacion al limite,
+    // pensado para disparar la alerta del XGBoost con margen amplio
+    RevolvingUtilizationOfUnsecuredLines: 1.1,
+    age: 33,
+    "NumberOfTime30-59DaysPastDueNotWorse": 3,
+    DebtRatio: 0.85,
+    MonthlyIncome: 450,
+    NumberOfOpenCreditLinesAndLoans: 8,
+    NumberOfTimes90DaysLate: 4,
+    NumberRealEstateLoansOrLines: 2,
+    "NumberOfTime60-89DaysPastDueNotWorse": 2,
+    NumberOfDependents: 3,
   },
   jorge: {
     // presion_sostenida: uso alto Y ya hay atraso
