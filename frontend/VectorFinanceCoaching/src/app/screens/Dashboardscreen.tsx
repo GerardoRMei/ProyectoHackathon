@@ -99,19 +99,27 @@ function RegistroCard({ registro, onVerTranscripcion }: RegistroCardProps) {
       ...COLORS.neutral,
     };
 
+  const idCorto = `Sesión ${registro.sesion_id.slice(0, 8)}`;
+
   return (
     <View style={styles.card}>
       <View style={styles.cardAccent} />
       <View style={styles.cardBody}>
         <View style={styles.cardHeader}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.cardTitle}>Sesión {registro.sesion_id.slice(0, 8)}</Text>
-            <Text style={styles.cardDate}>{formatearFecha(registro.fecha_hora)}</Text>
+            {/* Si no hay nombre_cliente (ej. registros viejos antes de
+                agregar la columna, o conversaciones sin persona demo
+                asignada), caemos al id de sesion como antes. */}
+            <Text style={styles.cardTitle}>{registro.nombre_cliente ?? idCorto}</Text>
+            <Text style={styles.cardDate}>
+              {registro.nombre_cliente ? `${idCorto} · ` : ''}
+              {formatearFecha(registro.fecha_hora)}
+            </Text>
           </View>
           {registro.score_riesgo != null && (
             <View style={styles.scoreBadge}>
               <Text style={styles.scoreBadgeText}>
-                {(registro.score_riesgo * 100).toFixed(0)}%
+                {(registro.score_riesgo * 100).toFixed(0)}% riesgo
               </Text>
             </View>
           )}
@@ -132,10 +140,21 @@ function RegistroCard({ registro, onVerTranscripcion }: RegistroCardProps) {
             </View>
           ) : null}
 
-          {(registro.calificacion_satisfaccion || registro.calificacion_trato) ? (
+          {/* Antes era un solo chip "⭐ 3 · 🤝 3" -- los emojis no dejaban
+              claro cual numero era cual. Ahora son dos chips con etiqueta
+              de texto, y cada uno solo aparece si esa calificacion existe. */}
+          {registro.calificacion_satisfaccion != null ? (
             <View style={styles.feedbackChip}>
               <Text style={styles.feedbackChipText}>
-                ⭐ {registro.calificacion_satisfaccion ?? '—'} · 🤝 {registro.calificacion_trato ?? '—'}
+                Satisfacción: {registro.calificacion_satisfaccion}/5
+              </Text>
+            </View>
+          ) : null}
+
+          {registro.calificacion_trato != null ? (
+            <View style={styles.feedbackChip}>
+              <Text style={styles.feedbackChipText}>
+                Trato: {registro.calificacion_trato}/5
               </Text>
             </View>
           ) : null}

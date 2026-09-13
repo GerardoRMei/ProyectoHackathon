@@ -10,24 +10,78 @@
 
 const LANG = "es-MX"; // ajusta a "es-SV" o "es-ES" si tu navegador lo soporta mejor
 
+// --- Mic gating -------------------------------------------------------
+// audioActivo: referencia al <audio> del bot mientras está sonando, o null.
+// recognitionActivo: referencia al SpeechRecognition mientras escucha, o null.
+// Nunca deben estar los dos "vivos" al mismo tiempo -- esto es lo que evita
+// que el eco/ruido del audio del bot se cuele como si fuera texto del
+// cliente. Exportamos getters para que el componente pueda deshabilitar
+// visualmente el botón de mic mientras el bot habla.
+let audioActivo = null;
+let recognitionActivo = null;
+
+/** true mientras el audio del bot está sonando. Úsalo para deshabilitar
+ * el botón de mic en la UI. */
+export function estaHablando() {
+  return audioActivo !== null;
+}
+
+/** true mientras el mic está escuchando activamente. */
+export function estaEscuchando() {
+  return recognitionActivo !== null;
+}
+
 /**
  * Convierte texto a voz y lo reproduce de inmediato.
- * @param {string} text
+ * @param {string} audioBase64
  * @returns {Promise<void>} se resuelve cuando termina de hablar
  */
 export function speak(audioBase64) {
+  // Si por algun motivo el mic seguia abierto (ej. el usuario alcanzo a
+  // tocar el boton justo antes de que empezara a sonar el audio), lo
+  // cortamos de una vez: nunca deben sonar el audio del bot y el mic al
+  // mismo tiempo, en ninguna direccion.
+  cancelListening();
+
   return new Promise((resolve, reject) => {
     const audio = new Audio(`data:audio/mp3;base64,${audioBase64}`);
-    audio.onended = () => resolve();
-    audio.onerror = (e) => reject(e);
-    audio.play().catch(reject);
+    audioActivo = audio;
+
+    const limpiar = () => {
+      audioActivo = null;
+    };
+
+    audio.onended = () => {
+      limpiar();
+      resolve();
+    };
+    audio.onerror = (e) => {
+      limpiar();
+      reject(e);
+    };
+    audio.play().catch((e) => {
+      limpiar();
+      reject(e);
+    });
   });
 }
 
-// Referencia al reconocimiento de voz activo, si hay uno. Se usa para poder
-// cancelarlo desde afuera (ej. cuando la conversación se cierra) aunque el
-// usuario siga hablando en ese momento.
-let recognitionActivo = null;
+/**
+ * Corta la reproduccion del audio del bot a medio camino, si hay uno
+ * sonando (patron "interrumpir"). Resuelve la promesa de speak() de
+ * inmediato en vez de dejarla colgada. Seguro de llamar aunque no haya
+ * nada sonando.
+ */
+export function cancelSpeaking() {
+  if (audioActivo) {
+    try {
+      audioActivo.pause();
+    } catch (e) {
+      // Ya se habia detenido solo, no pasa nada.
+    }
+    audioActivo = null;
+  }
+}
 
 /**
  * Aborta el reconocimiento de voz en curso, si lo hay. Seguro de llamar
@@ -53,9 +107,18 @@ export function cancelListening() {
  * @returns {Promise<string>} el texto final, una vez que el usuario deja de hablar
  *   (si se cancela con cancelListening(), resuelve con lo que se alcanzó a
  *   transcribir hasta ese momento, normalmente vacío -- no rechaza).
+ * @throws {Error} con message "MIC_BLOQUEADO_AUDIO_EN_CURSO" si se llama
+ *   mientras el bot esta hablando -- el componente deberia evitar llegar a
+ *   este caso deshabilitando el boton de mic segun estaHablando(), pero
+ *   esta es la segunda linea de defensa por si se llama de todos modos.
  */
 export function listen(onInterim) {
   return new Promise((resolve, reject) => {
+    if (audioActivo) {
+      reject(new Error("MIC_BLOQUEADO_AUDIO_EN_CURSO"));
+      return;
+    }
+
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -88,8 +151,9 @@ export function listen(onInterim) {
 
     recognition.onerror = (event) => {
       // "aborted" pasa cuando NOSOTROS llamamos cancelListening() a proposito
-      // (ej. la conversacion acaba de cerrarse) -- no es un error real del
-      // usuario, así que no lo mostramos ni lo rechazamos.
+      // (ej. la conversacion acaba de cerrarse, o empezo a sonar el audio
+      // del bot) -- no es un error real del usuario, así que no lo
+      // mostramos ni lo rechazamos.
       if (event.error === "aborted") {
         return;
       }
@@ -120,11 +184,14 @@ export function listen(onInterim) {
  *
  * Ejemplo de uso en un componente:
  *
- *   import { listen, speak, cancelListening } from "./voiceService";
+ *   import { listen, speak, cancelListening, estaHablando } from "./voiceService";
+ *
+ *   // en el render: deshabilita el boton de mic con estaHablando()
+ *   // <MicButton disabled={estaHablando()} onPress={handleTurn} />
  *
  *   async function handleTurn() {
  *     const userText = await listen();
  *     const respuesta = await llamarCopiloto(userText); // tu lógica / backend
- *     await speak(respuesta);
+ *     await speak(respuesta.audioBase64);
  *   }
  */
